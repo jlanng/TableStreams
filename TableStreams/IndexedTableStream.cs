@@ -82,7 +82,7 @@ public class IndexedTableStream<TKey, TValue> : IIndexedTableStream<TKey, TValue
                         
         return new ReducerResult(
             state.SetItem(key, newValue), 
-            new Update<TKey, TValue>(key, currentValue!, newValue)
+            new Update<TKey, TValue>(key, currentValue, newValue)
         );
 
     }

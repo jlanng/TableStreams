@@ -4,9 +4,9 @@ using System.Text;
 using LanguageExt;
 using Microsoft.Reactive.Testing;
 
-namespace TableStreams.Tests;
+namespace TableStreams.Tests.Examples;
 
-public class FaangNewsAndPriceJoinTests
+public class FaangNewsAndPriceJoinExamples
 {
     const string MissingValueString = "N/A";
 

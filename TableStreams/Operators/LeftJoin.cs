@@ -1,5 +1,4 @@
 ﻿using System.Collections.Immutable;
-using System.Diagnostics;
 using System.Reactive.Linq;
 using LanguageExt;
 using LanguageExt.SomeHelp;
@@ -34,8 +33,8 @@ internal static class LeftJoinOperator
                             {
                                 var initialState = state;
                                 
-                                // intermediate row changes have sufficient information to both build the output rows and recude internal state
-                                // perhaps the intermediate state can be extracted since it's a distinct abstraction but that might impact coherence
+                                // intermediate row changes have sufficient information to both build the output rows and reduce internal state, ready for the next input
+                                // TODO consider extracting intermediate state since it's a distinct abstraction. might impact coherence
                                 
                                 var intermediateRowChanges = eitherLeftOrRightUpdate.Match(
                                     right => DeriveIntermediateChangesFromRightChange(initialState, right, resultSelector),
@@ -66,9 +65,10 @@ internal static class LeftJoinOperator
 
         return new IndexedTableStream<TLeftKey, TResult>(resultStream);
     }
-
-     readonly record struct LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue>(
+    
+    readonly record struct LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue>(
         // this is the materialized index that gets updated and published alongside every update
+        // maintained internally
         ImmutableDictionary<TLeftKey, TResult> ResultTableIndex, 
         
         // used to identify which joined records need to be serviced when a right-side update is processed
@@ -76,91 +76,8 @@ internal static class LeftJoinOperator
         ImmutableDictionary<TRightKey, Dictionary<TLeftKey, TLeftValue>> RightToLeftJoinIndex,
         
         // used to attempt joins
-        // sourced from latest right-side update
+        // remembered from the latest right-side update
         IReadOnlyDictionary<TRightKey, TRightValue> RightTableIndex) where TLeftKey : notnull where TRightKey : notnull;
-
-    static LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue> ReduceState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue>(
-        LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue> state,
-        Option<IReadOnlyDictionary<TRightKey, TRightValue>> updatedRightIndex,
-        TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue, TResult Result)>[] diffs) where TLeftKey : notnull where TRightKey : notnull
-    {
-        var resultTableIndexBuilder = state.ResultTableIndex.ToBuilder();
-        var rightToLeftJoinIndexBuilder = state.RightToLeftJoinIndex.ToBuilder();
-        
-        foreach (var diff in diffs)
-        {
-            ApplyDiffToResultIndexBuilder(resultTableIndexBuilder, diff);
-            ApplyDiffToRightToLeftJoinIndexBuilder(rightToLeftJoinIndexBuilder, diff);
-        }
-
-        return new LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue>(
-            resultTableIndexBuilder.ToImmutable(),
-            rightToLeftJoinIndexBuilder.ToImmutable(),
-            updatedRightIndex.IfNone(state.RightTableIndex));
-    }
-
-    static void ApplyDiffToResultIndexBuilder<TLeftKey, TResult, TLeftValue, TRightKey, TRightValue>(
-        ImmutableDictionary<TLeftKey, TResult>.Builder resultTableIndexBuilder, 
-        TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue, TResult Result)> diff)
-        where TLeftKey : notnull where TRightKey : notnull
-    {
-        diff.Match(
-            insert =>
-            {
-                resultTableIndexBuilder[insert.Key] = insert.InsertedValue.Result;
-            },
-            update =>
-            {
-                resultTableIndexBuilder[update.Key] = update.UpdatedValue.Result;
-            },
-            delete =>
-            {
-                resultTableIndexBuilder.Remove(delete.Key);
-            });
-    }
-    
-    internal static void ApplyDiffToRightToLeftJoinIndexBuilder<TRightKey, TLeftKey, TLeftValue, TRightValue, TResult>(
-        ImmutableDictionary<TRightKey, Dictionary<TLeftKey, TLeftValue>>.Builder joinedRowsIndexBuilder, 
-        TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue, TResult Result)> diff) where TRightKey : notnull where TLeftKey : notnull
-    {
-        diff.Match(
-            insert =>
-            {
-                insert.InsertedValue.RightKey.IfSome(rightKey => SetJoin(joinedRowsIndexBuilder, rightKey, insert.Key, insert.InsertedValue.LeftValue));
-            },
-            update =>
-            {
-                if (!update.PreviousValue.RightKey.Equals(update.UpdatedValue.RightKey) || !update.PreviousValue.LeftValue!.Equals(update.UpdatedValue.LeftValue))
-                {
-                    update.PreviousValue.RightKey.IfSome(previousRightKey => ClearJoin(joinedRowsIndexBuilder, previousRightKey, update.Key));
-
-                    update.UpdatedValue.RightKey.IfSome(rightKey => SetJoin(joinedRowsIndexBuilder, rightKey, update.Key, update.UpdatedValue.LeftValue));
-                }
-            },
-            delete =>
-            {
-                delete.DeletedValue.RightKey.IfSome(previousRightKey => ClearJoin(joinedRowsIndexBuilder, previousRightKey, delete.Key)  );
-            });
-
-        void SetJoin(ImmutableDictionary<TRightKey, Dictionary<TLeftKey, TLeftValue>>.Builder builder, TRightKey rightKey, TLeftKey leftKey, TLeftValue leftValue)
-        {
-            builder.GetOrAdd(rightKey, () => new Dictionary<TLeftKey, TLeftValue>())[leftKey] = leftValue;
-        }
-        
-        void ClearJoin(ImmutableDictionary<TRightKey, Dictionary<TLeftKey, TLeftValue>>.Builder builder, TRightKey rightKey, TLeftKey leftKey)
-        {
-            var dict = builder[rightKey];
-
-            if (dict.Count == 1)
-            {
-                joinedRowsIndexBuilder.Remove(rightKey);
-            }
-            else
-            {
-                dict.Remove(leftKey);
-            }
-        }
-    }
 
     static TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue, TResult Result)>[] DeriveIntermediateChangesFromLeftChange
         <TLeftKey, TResult, TRightKey, TRightValue, TLeftValue>(
@@ -279,6 +196,89 @@ internal static class LeftJoinOperator
                 }))
             .Flatten()
             .ToArray();
+    }
+    
+    static LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue> ReduceState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue>(
+        LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue> state,
+        Option<IReadOnlyDictionary<TRightKey, TRightValue>> updatedRightIndex,
+        TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue, TResult Result)>[] diffs) where TLeftKey : notnull where TRightKey : notnull
+    {
+        var resultTableIndexBuilder = state.ResultTableIndex.ToBuilder();
+        var rightToLeftJoinIndexBuilder = state.RightToLeftJoinIndex.ToBuilder();
+        
+        foreach (var diff in diffs)
+        {
+            ApplyDiffToResultIndexBuilder(resultTableIndexBuilder, diff);
+            ApplyDiffToRightToLeftJoinIndexBuilder(rightToLeftJoinIndexBuilder, diff);
+        }
+
+        return new LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue>(
+            resultTableIndexBuilder.ToImmutable(),
+            rightToLeftJoinIndexBuilder.ToImmutable(),
+            updatedRightIndex.IfNone(state.RightTableIndex));
+    }
+
+    static void ApplyDiffToResultIndexBuilder<TLeftKey, TResult, TLeftValue, TRightKey, TRightValue>(
+        ImmutableDictionary<TLeftKey, TResult>.Builder resultTableIndexBuilder, 
+        TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue, TResult Result)> diff)
+        where TLeftKey : notnull where TRightKey : notnull
+    {
+        diff.Match(
+            insert =>
+            {
+                resultTableIndexBuilder[insert.Key] = insert.InsertedValue.Result;
+            },
+            update =>
+            {
+                resultTableIndexBuilder[update.Key] = update.UpdatedValue.Result;
+            },
+            delete =>
+            {
+                resultTableIndexBuilder.Remove(delete.Key);
+            });
+    }
+    
+    static void ApplyDiffToRightToLeftJoinIndexBuilder<TRightKey, TLeftKey, TLeftValue, TRightValue, TResult>(
+        ImmutableDictionary<TRightKey, Dictionary<TLeftKey, TLeftValue>>.Builder joinedRowsIndexBuilder, 
+        TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue, TResult Result)> diff) where TRightKey : notnull where TLeftKey : notnull
+    {
+        diff.Match(
+            insert =>
+            {
+                insert.InsertedValue.RightKey.IfSome(rightKey => SetJoin(joinedRowsIndexBuilder, rightKey, insert.Key, insert.InsertedValue.LeftValue));
+            },
+            update =>
+            {
+                if (!update.PreviousValue.RightKey.Equals(update.UpdatedValue.RightKey) || !update.PreviousValue.LeftValue!.Equals(update.UpdatedValue.LeftValue))
+                {   
+                    update.PreviousValue.RightKey.IfSome(previousRightKey => ClearJoin(joinedRowsIndexBuilder, previousRightKey, update.Key));
+
+                    update.UpdatedValue.RightKey.IfSome(rightKey => SetJoin(joinedRowsIndexBuilder, rightKey, update.Key, update.UpdatedValue.LeftValue));
+                }
+            },
+            delete =>
+            {
+                delete.DeletedValue.RightKey.IfSome(previousRightKey => ClearJoin(joinedRowsIndexBuilder, previousRightKey, delete.Key)  );
+            });
+
+        void SetJoin(ImmutableDictionary<TRightKey, Dictionary<TLeftKey, TLeftValue>>.Builder builder, TRightKey rightKey, TLeftKey leftKey, TLeftValue leftValue)
+        {
+            builder.GetOrAdd(rightKey, () => new Dictionary<TLeftKey, TLeftValue>())[leftKey] = leftValue;
+        }
+        
+        void ClearJoin(ImmutableDictionary<TRightKey, Dictionary<TLeftKey, TLeftValue>>.Builder builder, TRightKey rightKey, TLeftKey leftKey)
+        {
+            var dict = builder[rightKey];
+
+            if (dict.Count == 1)
+            {
+                joinedRowsIndexBuilder.Remove(rightKey);
+            }
+            else
+            {
+                dict.Remove(leftKey);
+            }
+        }
     }
     
     static TableRowChange<TLeftKey, TResult>[] TransformIntermediateToPublishable<TLeftKey, TResult, TLeftValue, TRightKey, TRightValue>(

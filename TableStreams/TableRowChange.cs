@@ -3,7 +3,7 @@
 /// <summary>
 /// Discriminated union of all possible change types
 /// </summary>
-public abstract record TableRowChange<TKey, TValue>()
+public abstract record TableRowChange<TKey, TValue>
 {
     public TMatchResult Match<TMatchResult>(
         Func<Insert<TKey, TValue>, TMatchResult> insert, 

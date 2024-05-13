@@ -1,6 +1,4 @@
-﻿using System.Text;
-
-namespace TableStreams.Tests;
+﻿namespace TableStreams.Tests;
 
 public static class RandomData
 {

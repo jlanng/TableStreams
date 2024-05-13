@@ -4,6 +4,9 @@ using TableStreams.Operators;
 
 namespace TableStreams;
 
+/// <summary>
+/// Ergonomic access to operators
+/// </summary>
 public static class IndexedTableStreamExtensions
 {
     public static IIndexedTableStream<TLeftKey, TResult>
@@ -16,7 +19,7 @@ public static class IndexedTableStreamExtensions
         return LeftJoinOperator.LeftJoin(leftSource, rightSource, foreignKeyExtractor, resultSelector);
     }
 
-    public static IndexedTableStream<TKey, TValue> Aggregate<TKey, TValue>(this IIndexedTableStream<TKey, TValue> source)
+    public static Task<IReadOnlyDictionary<TKey, TValue>?> Aggregate<TKey, TValue>(this IIndexedTableStream<TKey, TValue> source)
         where TKey : notnull
     {
         return AggregateOperator.Aggregate(source);
@@ -53,5 +56,12 @@ public static class IndexedTableStreamExtensions
             .Concat(Observable.Return(second));
 
         return new IndexedTableStream<TKey, TValue>(concatenated);
+    }
+
+    public static IDisposable Subscribe<TKey, TValue>(
+        this IIndexedTableStream<TKey, TValue> source,
+        IObserver<IndexedTableStreamUpdate<TKey, TValue>> observer) where TKey : notnull
+    {
+        return source.UnderlyingStream.Subscribe(observer);
     }
 }
