@@ -40,18 +40,18 @@ internal static class LeftJoinOperator
                                 var intermediateRowChanges = eitherLeftOrRightUpdate.Match(
                                     right => DeriveIntermediateChangesFromRightChange(initialState, right, resultSelector),
                                     left => DeriveIntermediateChangesFromLeftChange(initialState, left, resultSelector, foreignKeyExtractor));
-
-                                if (intermediateRowChanges.Length == 0)
-                                {
-                                    return;
-                                }
                                 
                                 state = ReduceState(
-                                    state,
+                                    initialState,
                                     eitherLeftOrRightUpdate.Match(
                                         right => right.Index.ToSome(), 
                                         _ => Option<IReadOnlyDictionary<TRightKey, TRightValue>>.None),
                                     intermediateRowChanges);
+                                
+                                if (intermediateRowChanges.Length == 0)
+                                {
+                                    return;
+                                }
 
                                 var changesForPublication = TransformIntermediateToPublishable(intermediateRowChanges);
                                 
