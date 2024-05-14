@@ -38,7 +38,7 @@ internal static class LeftJoinOperator
                                 
                                 var intermediateRowChanges = eitherLeftOrRightUpdate.Match(
                                     right => DeriveIntermediateChangesFromRightChange(initialState, right, resultSelector),
-                                    left => DeriveIntermediateChangesFromLeftChange(initialState, left, resultSelector, foreignKeyExtractor));
+                                    left => DeriveIntermediateChangesFromLeftChange(initialState, left, foreignKeyExtractor, resultSelector));
                                 
                                 state = ReduceState(
                                     initialState,
@@ -79,12 +79,14 @@ internal static class LeftJoinOperator
         // remembered from the latest right-side update
         IReadOnlyDictionary<TRightKey, TRightValue> RightTableIndex) where TLeftKey : notnull where TRightKey : notnull;
 
-    static TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue, TResult Result)>[] DeriveIntermediateChangesFromLeftChange
+    static
+        TableRowChange<TLeftKey, (TLeftValue LeftValue, Option<TRightKey> RightKey, Option<TRightValue> RightValue,
+            TResult Result)>[] DeriveIntermediateChangesFromLeftChange
         <TLeftKey, TResult, TRightKey, TRightValue, TLeftValue>(
-        LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue> state,
-        IndexedTableStreamUpdate<TLeftKey, TLeftValue> leftUpdate,
-        Func<TLeftValue, Option<TRightValue>, TResult> resultSelector,
-        Func<TLeftValue, Option<TRightKey>> foreignKeyExtractor) where TLeftKey : notnull where TRightKey : notnull
+            LeftJoinState<TLeftKey, TLeftValue, TResult, TRightKey, TRightValue> state,
+            IndexedTableStreamUpdate<TLeftKey, TLeftValue> leftUpdate,
+            Func<TLeftValue, Option<TRightKey>> foreignKeyExtractor,
+            Func<TLeftValue, Option<TRightValue>, TResult> resultSelector) where TLeftKey : notnull where TRightKey : notnull
     {
         return leftUpdate.Changes.Select(change => change.Match(insert =>
                 {
