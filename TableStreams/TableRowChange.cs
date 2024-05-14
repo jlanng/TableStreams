@@ -2,6 +2,9 @@
 
 /// <summary>
 /// Discriminated union of all possible change types
+///
+/// Includes previous value in the case of updates and deletes since downstream operators will find this useful
+/// (e.g. mean average)
 /// </summary>
 public abstract record TableRowChange<TKey, TValue>
 {

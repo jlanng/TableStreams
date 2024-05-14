@@ -122,37 +122,73 @@ public class LeftJoinTests
             new Update<int, JoinedRecord>(1, new JoinedRecord("LeftValue", Option<string>.None), new JoinedRecord("LeftValue", Option<string>.Some("RightValue"))), 
             messages[1].Value.Value.Changes.Single());
     }
-    
+
     [Fact]
     public void RightRecordInsertedAfterMultipleMatchingLeftRows_EmitsJoinedRowUpdatesForAllMatchingRowsInSingleBatch()
     {
-        var messages = TestHelper.RunScheduledTableStreamFixture(testScheduler =>
+        var messagesAfterTime10 = TestHelper.RunScheduledTableStreamFixture(testScheduler =>
+            {
+                var leftTableStream = testScheduler.CreateColdIndexedTableStream(
+                    (0, [
+                        // matched
+                        new Insert<int, LeftRecord>(1, new LeftRecord(Option<int>.Some(1), "LeftValue1")),
+                        new Insert<int, LeftRecord>(2, new LeftRecord(Option<int>.Some(1), "LeftValue2")),
+
+                        // unmatched
+                        new Insert<int, LeftRecord>(3, new LeftRecord(Option<int>.Some(int.MaxValue), "LeftValue3")),
+                    ]));
+
+                var rightTableStream = testScheduler.CreateColdIndexedTableStream(
+                    (10, [new Insert<int, RightRecord>(1, new RightRecord("RightValue"))])
+                );
+
+                return leftTableStream
+                    .LeftJoin(rightTableStream, record => record.ForeignKey,
+                        (leftRecord, optionOfRightRecord) => new JoinedRecord(leftRecord, optionOfRightRecord));
+            })
+            .Where(x => x.Time >= 10)
+            .ToArray();
+
+        Assert.Equal(2, messagesAfterTime10.Single().Value.Value.Changes.Length);
+        Assert.Equal(
+            new Update<int, JoinedRecord>(1, new JoinedRecord("LeftValue1", Option<string>.None),
+                new JoinedRecord("LeftValue1", Option<string>.Some("RightValue"))),
+            messagesAfterTime10.Single().Value.Value.Changes[0]);
+        Assert.Equal(
+            new Update<int, JoinedRecord>(2, new JoinedRecord("LeftValue2", Option<string>.None),
+                new JoinedRecord("LeftValue2", Option<string>.Some("RightValue"))),
+            messagesAfterTime10.Single().Value.Value.Changes[1]);
+    }
+
+    [Fact]
+    public void RightRecordDeletedWhilstJoinedToMultipleLeft_EmitsJoinedRowUpdatesForAllMatchingRowsInSingleBatch()
+    {
+        var messagesAfterTime20 = TestHelper.RunScheduledTableStreamFixture(testScheduler =>
         {
             var leftTableStream = testScheduler.CreateColdIndexedTableStream(
                 (0, [
                     // matched
                     new Insert<int, LeftRecord>(1, new LeftRecord(Option<int>.Some(1), "LeftValue1")),
                     new Insert<int, LeftRecord>(2, new LeftRecord(Option<int>.Some(1), "LeftValue2")),
-                    
-                    // unmatched
-                    new Insert<int, LeftRecord>(3, new LeftRecord(Option<int>.Some(int.MaxValue), "LeftValue3")),
                 ])); 
             
             var rightTableStream = testScheduler.CreateColdIndexedTableStream(
-                (10, [new Insert<int, RightRecord>(1, new RightRecord("RightValue"))])
+                (10, [new Insert<int, RightRecord>(1, new RightRecord("RightValue"))]),
+                (20, [new Delete<int, RightRecord>(1, new RightRecord("RightValue"))])
             );
             
             return leftTableStream
                 .LeftJoin(rightTableStream, record => record.ForeignKey, (leftRecord, optionOfRightRecord) => new JoinedRecord(leftRecord, optionOfRightRecord));
-        });
+        })
+        .Where(x=>x.Time>=20)
+        .ToArray();
         
-        Assert.Equal(2, messages.Count);
-        Assert.Equal(2, messages[1].Value.Value.Changes.Length);
+        Assert.Equal(2, messagesAfterTime20.Single().Value.Value.Changes.Length);
         Assert.Equal(
-            new Update<int, JoinedRecord>(1, new JoinedRecord("LeftValue1", Option<string>.None), new JoinedRecord("LeftValue1", Option<string>.Some("RightValue"))), 
-            messages[1].Value.Value.Changes[0]);
+            new Update<int, JoinedRecord>(1, new JoinedRecord("LeftValue1", Option<string>.Some("RightValue")), new JoinedRecord("LeftValue1", Option<string>.None)), 
+            messagesAfterTime20.Single().Value.Value.Changes[0]);
         Assert.Equal(
-            new Update<int, JoinedRecord>(2, new JoinedRecord("LeftValue2", Option<string>.None), new JoinedRecord("LeftValue2", Option<string>.Some("RightValue"))), 
-            messages[1].Value.Value.Changes[1]);
+            new Update<int, JoinedRecord>(2, new JoinedRecord("LeftValue2", Option<string>.Some("RightValue")), new JoinedRecord("LeftValue2", Option<string>.None)), 
+            messagesAfterTime20.Single().Value.Value.Changes[1]);
     }
 }
